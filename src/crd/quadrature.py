@@ -5,10 +5,9 @@ from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
-import numpy.typing as npt
 from scipy.special import voigt_profile
 
-Array = npt.NDArray[np.float64]
+from crd.typing import Array, Float, UFloat
 
 
 @dataclass(slots=True)
@@ -18,17 +17,19 @@ class Quadrature:
     points: Array
     weights: Array
 
-    def norm(self) -> float:
-        return np.sum(self.weights)  # type: ignore
+    def norm(self) -> Float:
+        return Float(np.sum(self.weights))
 
-    def normalize(self, value: float = 1.0) -> Quadrature:
+    def normalize(self, value: UFloat = Float(1.0)) -> Quadrature:
         self.weights *= value / self.norm()
         return self
 
-    def integrate(self, f: Callable[[Array | float], Array | float]) -> float:
-        return np.sum(self.weights * f(self.points))
+    def integrate(self, f: Callable[[Array | UFloat], Array | UFloat]) -> Float:
+        return np.sum(self.weights * Float(f(self.points)))
 
-    def integrate_points(self, f: Array) -> float:
+    def integrate_points(self, f: Array) -> Float:
+        if f.dtype != Float:
+            f = f.astype(Float)
         if len(f) != len(self):
             raise ValueError("f must have the same length as the quadrature")
         return np.sum(self.weights * f)
@@ -37,7 +38,7 @@ class Quadrature:
     def n(self) -> int:
         return len(self)
 
-    def __getitem__(self, index: int) -> float:
+    def __getitem__(self, index: int) -> Float:
         return self.points[index]
 
     def __len__(self) -> int:
@@ -45,8 +46,8 @@ class Quadrature:
 
 
 def integrate_quadrature(
-    f: Callable[[Array | float], Array | float] | Array, q: Quadrature
-) -> float:
+    f: Callable[[Array | UFloat], Array | UFloat] | Array, q: Quadrature
+) -> Float:
     if isinstance(f, np.ndarray):
         return q.integrate_points(f)
     elif isinstance(f, Sequence):
@@ -55,45 +56,45 @@ def integrate_quadrature(
         return q.integrate(f)
 
 
-def gauss_legendre(n: int, limits: tuple[float, float] = (-1.0, 1.0)) -> Quadrature:
+def gauss_legendre(
+    n: int, limits: tuple[UFloat, UFloat] = (Float(-1.0), Float(1.0))
+) -> Quadrature:
     """Gauss-Legendre quadrature."""
-    a, b = limits
+    a = Float(limits[0])
+    b = Float(limits[1])
     x, w = np.polynomial.legendre.leggauss(n)
     x = x * (b - a) / 2 + (a + b) / 2
     w = w * (b - a) / 2
     return Quadrature(x, w)
 
 
-def double_gauss_legendre(n: int, limit: float = 1.0) -> Quadrature:
+def double_gauss_legendre(n: int, limit: UFloat = 1.0) -> Quadrature:
     """Double Gauss-Legendre quadrature. Gives a quadrature between
     (-limit, limit), with each half of the domain ((-limit, 0) & (0, limit))
     being a gauss legendre quadrature.
     """
-    glquad1 = gauss_legendre(n, (-limit, 0.0))
-    glquad2 = gauss_legendre(n, (0.0, limit))
+    glquad1 = gauss_legendre(n, (-limit, Float(0.0)))
+    glquad2 = gauss_legendre(n, (Float(0.0), limit))
     x1, w1 = glquad1.points, glquad1.weights
     x2, w2 = glquad2.points, glquad2.weights
     x = np.concatenate((x1, x2))
-    w = np.concatenate((w1, w2)) / 2
+    w = np.concatenate((w1, w2)) / Float(2.0)
     return Quadrature(x, w)
 
 
-def trapezoid(a: float, b: float, n: int) -> Quadrature:
+def trapezoid(a: UFloat, b: UFloat, n: int) -> Quadrature:
     """Uses trapezoid rule to integrate. Creates a uniform set of n points
     between a and b.
     """
-    x = np.linspace(a, b, n)
+    a, b = Float(a), Float(b)
+    x = np.linspace(a, b, n, dtype=Float)
     return trapezoid_points(x)
 
 
 def trapezoid_points(x: Array) -> Quadrature:
     """Trapezoid quadrature. The array x defines a custom basis."""
-    a, b = x[0], x[-1]
-    n = len(x)
-    w = np.ones(n)
-    w[0] = 0.5
-    w[-1] = 0.5
-    w *= (b - a) / (n - 1)
+    w = np.diff(x, append=Float(0.0)) + np.diff(x, prepend=Float(0.0))
+    w /= Float(2.0)
     return Quadrature(x, w)
 
 
@@ -101,7 +102,7 @@ def log_uniform(log_min: int, log_max: int, points_per_decade: int) -> Quadratur
     """Trapezoid quadrature where the points are spaced uniformly on the
     log-scale."""
     n = int((log_max - log_min) * points_per_decade + 1)
-    x = np.logspace(log_min, log_max, n)
+    x = np.logspace(log_min, log_max, n, dtype=Float)
     return trapezoid_points(x)
 
 
@@ -126,17 +127,18 @@ def cosines(n: int) -> Quadrature:
 
 
 def freqs(
-    phi_f: Callable[[float], float],
-    x_max: float = 6.0,
+    phi_f: Callable[[Float], UFloat],
+    x_max: UFloat = Float(6.0),
     *,
     n: int | None = None,
     n_per_unit: int = 4,
     half: bool = False,
 ) -> tuple[Quadrature, Array]:
+    x_max = Float(x_max)
     if half:
         if n is None:
             n = int(x_max * n_per_unit + 1)
-        quad = trapezoid(0.0, x_max, n)
+        quad = trapezoid(Float(0.0), x_max, n)
     else:
         if n is None:
             n = int(2 * x_max * n_per_unit + 1)
@@ -148,14 +150,14 @@ def freqs(
 def freqs_voigt(
     sigma: float = 1 / np.sqrt(2),
     gamma: float = 0.0,
-    x_max: float = 6.0,
+    x_max: UFloat = Float(6.0),
     *,
     n: int | None = None,
     n_per_unit: int = 4,
     half: bool = False,
 ) -> tuple[Quadrature, Array]:
     return freqs(
-        lambda x: voigt_profile(x, sigma, gamma),
+        lambda x: voigt_profile(float(x), sigma, gamma),
         x_max,
         n=n,
         n_per_unit=n_per_unit,
@@ -163,7 +165,7 @@ def freqs_voigt(
     )
 
 
-def _freqs_points(phi_f: Callable[[float], float], quad_mut: Quadrature) -> Array:
-    phi = np.array([phi_f(x) for x in quad_mut.points])
+def _freqs_points(phi_f: Callable[[Float], UFloat], quad_mut: Quadrature) -> Array:
+    phi = np.array([Float(phi_f(x)) for x in quad_mut.points])
     quad_mut.weights /= quad_mut.integrate_points(phi)
     return phi

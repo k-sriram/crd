@@ -1,27 +1,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Literal
+from typing import Literal
 
 import numpy as np
-import numpy.typing as npt
 
 from crd import quadrature
 from crd.quadrature import Quadrature
-
-Array = npt.NDArray[np.float64]
-ArrayND = Annotated[Array, ("ND",)]
-ArrayNA = Annotated[Array, ("NA",)]
-ArrayNF = Annotated[Array, ("NF",)]
-ArrayNDxND = Annotated[Array, ("ND", "ND")]
-ArrayNDxNA = Annotated[Array, ("ND", "NA")]
-ArrayNDxNF = Annotated[Array, ("ND", "NF")]
-ArrayNAxNF = Annotated[Array, ("NA", "NF")]
-ArrayNDxNAxNF = Annotated[Array, ("ND", "NA", "NF")]
-ArrayMask = npt.NDArray[np.bool_]
-ArrayMaskNA = Annotated[ArrayMask, ("NA",)]
+from crd.typing import (
+    Array,
+    ArrayMaskNA,
+    ArrayNA,
+    ArrayNAxNF,
+    ArrayND,
+    ArrayNDxNAxNF,
+    ArrayNDxNF,
+    ArrayNF,
+    Float,
+    UFloat,
+)
 
 MAX_TAYLOR_SERIES = 20
+ZERO = Float(0.0)
+ONE = Float(1.0)
+NAN = Float(np.nan)
 
 
 class FormalSolver:
@@ -73,15 +75,15 @@ class FormalSolver:
         self.x = x
         self.phi = phi
 
-        od = mu.points > 0  # outgoing directions
-        id = mu.points < 0  # incoming directions
+        od = mu.points > ZERO  # outgoing directions
+        id = mu.points < ZERO  # incoming directions
 
         nd = len(tau)
         na = len(mu)
         nf = len(x)
 
         if dtau is None:
-            dtau = np.diff(tau.points, append=np.nan)
+            dtau = np.diff(tau.points, append=NAN)
 
         # dtau(d) -> dtau_mn(d,m,n) = dtau(d) * phi(n) / |mu(m)|
         dtau_mn = _expand_dtau(dtau, mu.points, phi)
@@ -97,11 +99,11 @@ class FormalSolver:
             od, id, nd, na, nf, dtau_mn, dtau_mn_minus
         )
 
-        alpha = np.zeros((nd, na, nf))
-        beta = np.zeros((nd, na, nf))
-        gamma = np.zeros((nd, na, nf))
+        alpha = np.zeros((nd, na, nf), dtype=Float)
+        beta = np.zeros((nd, na, nf), dtype=Float)
+        gamma = np.zeros((nd, na, nf), dtype=Float)
 
-        small_dt = dtau_mn < 0.1
+        small_dt = dtau_mn < Float(0.1)
         alpha[small_dt] = alpha_ts[small_dt]
         alpha[~small_dt] = alpha_f[~small_dt]
         beta[small_dt] = beta_ts[small_dt]
@@ -111,7 +113,7 @@ class FormalSolver:
 
         # Calculating lstar
 
-        lstar_mn = np.zeros((nd, na, nf))
+        lstar_mn = np.zeros((nd, na, nf), dtype=Float)
         lstar_mn[:-1, od, :] += beta[:-1, od, :]
         lstar_mn[1:, id, :] += beta[1:, id, :]
         # The following two lines are very small and are not present in Hubeny+Mihalas
@@ -162,7 +164,7 @@ class FormalSolver:
 
         s = _conform_shape(s, nd, na, nf)
 
-        Ix = np.zeros((nd, na, nf))
+        Ix = np.zeros((nd, na, nf), dtype=Float)
 
         # For mu > 0. Set boundary condition at bottom and solve upwards.
         Ix[-1, od, :] = bc[od, :]
@@ -208,18 +210,20 @@ class Grid:
     @classmethod
     def new(
         cls,
-        log_min_tau: int = -4,
-        log_max_tau: int = 8,
-        points_per_decade=5,
-        depth_mirrored: bool = False,
-        n_angles: int = 3,
-        gamma: float = 0.0,
-        x_max: float = 6.0,
-        freqs_per_unit: int = 4,
-        half_freqs: bool = False,
-        bc_type: Literal["zero", "semi-inf"] = "zero",
-        b: Literal["one"] = "one",
+        *,
+        log_min_tau: int,
+        log_max_tau: int,
+        points_per_decade: int,
+        depth_mirrored: bool,
+        n_angles: int,
+        gamma: float,
+        x_max: UFloat,
+        freqs_per_unit: int,
+        half_freqs: bool,
+        bc_type: Literal["zero", "semi-inf"],
+        b: Literal["one"],
     ) -> Grid:
+        x_max = Float(x_max)
         if depth_mirrored:
             tau = quadrature.double_log_uniform(
                 log_min_tau, log_max_tau, points_per_decade
@@ -238,14 +242,43 @@ class Grid:
             gamma=gamma, x_max=x_max, n_per_unit=freqs_per_unit, half=half_freqs
         )
 
-        bc = np.zeros((len(mu), len(x)))
+        bc = np.zeros((len(mu), len(x)), dtype=Float)
         if bc_type == "semi-inf":
-            bc[mu.points > 0.0, :] = 1.0
+            bc[mu.points > ZERO, :] = ONE
 
         if b == "one":
-            b_arr = np.ones(len(tau))
+            b_arr = np.ones(len(tau), dtype=Float)
 
         return cls(tau, mu, x, phi, bc, b_arr, dtau)
+
+    @classmethod
+    def default(
+        cls,
+        log_min_tau: int = -4,
+        log_max_tau: int = 8,
+        points_per_decade: int = 5,
+        depth_mirrored: bool = False,
+        n_angles: int = 3,
+        gamma: float = 0.0,
+        x_max: UFloat = Float(6.0),
+        freqs_per_unit: int = 4,
+        half_freqs: bool = False,
+        bc_type: Literal["zero", "semi-inf"] = "zero",
+        b: Literal["one"] = "one",
+    ) -> Grid:
+        return cls.new(
+            log_min_tau=log_min_tau,
+            log_max_tau=log_max_tau,
+            points_per_decade=points_per_decade,
+            depth_mirrored=depth_mirrored,
+            n_angles=n_angles,
+            gamma=gamma,
+            x_max=x_max,
+            freqs_per_unit=freqs_per_unit,
+            half_freqs=half_freqs,
+            bc_type=bc_type,
+            b=b,
+        )
 
     def solver(self) -> FormalSolver:
         return FormalSolver(self.tau, self.mu, self.x, self.phi, self.dtau)
@@ -266,7 +299,7 @@ def _conform_shape(
         s = np.tile(s[:, None, :], (1, na, 1)).reshape((nd, na, nf))
 
     if s.shape != (nd, na, nf):
-        raise ValueError(f"{s.shape=} must be {(nd, na, nf)}")
+        raise ValueError(f"{s.shape=} must be expandable to {(nd, na, nf)}")
     return s
 
 
@@ -296,7 +329,7 @@ def propagation_coefficients_formula(
     e1_plus = e1[1:, :, :]
     e2_plus = e2[1:, :, :]
 
-    alpha = np.zeros((nd, na, nf))
+    alpha = np.zeros((nd, na, nf), dtype=Float)
     alpha[1:-1, od, :] = (
         e2_plus[1:, od, :] - dtau_mn[1:-1, od, :] * e1_plus[1:, od, :]
     ) / (
@@ -313,7 +346,7 @@ def propagation_coefficients_formula(
     alpha[0, id, :] = np.nan
     alpha[-1, id, :] = e0[-1, id, :] - e1[-1, id, :] / dtau_mn_minus[-1, id, :]
 
-    beta = np.zeros((nd, na, nf))
+    beta = np.zeros((nd, na, nf), dtype=Float)
     beta[1:-1, od, :] = (
         (dtau_mn[1:-1, od, :] + dtau_mn_minus[1:-1, od, :]) * e1_plus[1:, od, :]
         - e2_plus[1:, od, :]
@@ -327,7 +360,7 @@ def propagation_coefficients_formula(
     beta[0, id, :] = np.nan
     beta[-1, id, :] = e1[-1, id, :] / dtau_mn_minus[-1, id, :]
 
-    gamma = np.zeros((nd, na, nf))
+    gamma = np.zeros((nd, na, nf), dtype=Float)
     gamma[1:-1, od, :] = e0_plus[1:, od, :] + (
         e2_plus[1:, od, :]
         - (dtau_mn_minus[1:-1, od, :] + 2 * dtau_mn[1:-1, od, :]) * e1_plus[1:, od, :]
@@ -352,7 +385,7 @@ def propagation_coefficients_taylor_series(
     dtau_mn: ArrayNDxNAxNF,
     dtau_mn_minus: ArrayNDxNAxNF,
 ) -> tuple[ArrayNDxNAxNF, ArrayNDxNAxNF, ArrayNDxNAxNF]:
-    alpha = np.zeros((nd, na, nf))
+    alpha = np.zeros((nd, na, nf), dtype=Float)
     alpha[1:-1, od, :] = prop_coeff_ts_d(
         dtau_mn[1:-1, od, :], dtau_mn_minus[1:-1, od, :]
     )
@@ -364,7 +397,7 @@ def propagation_coefficients_taylor_series(
     alpha[0, id, :] = np.nan
     alpha[-1, id, :] = prop_coeff_ts_lin_u(dtau_mn_minus[-1, id, :])
 
-    beta = np.zeros((nd, na, nf))
+    beta = np.zeros((nd, na, nf), dtype=Float)
     beta[1:-1, od, :] = prop_coeff_ts_0(
         dtau_mn[1:-1, od, :], dtau_mn_minus[1:-1, od, :]
     )
@@ -376,7 +409,7 @@ def propagation_coefficients_taylor_series(
     beta[0, id, :] = np.nan
     beta[-1, id, :] = prop_coeff_ts_lin_0(dtau_mn_minus[-1, id, :])
 
-    gamma = np.zeros((nd, na, nf))
+    gamma = np.zeros((nd, na, nf), dtype=Float)
     gamma[1:-1, od, :] = prop_coeff_ts_u(
         dtau_mn[1:-1, od, :], dtau_mn_minus[1:-1, od, :]
     )
@@ -392,18 +425,18 @@ def propagation_coefficients_taylor_series(
 
 
 def prop_coeff_ts_d(dtu: Array, dtd: Array) -> Array:
-    psid = np.zeros_like(dtu)
+    psid = np.zeros_like(dtu, dtype=Float)
     for n in range(3, MAX_TAYLOR_SERIES):
-        psid += np.power(-dtu, n) * (n - 2) / factorial(n)
+        psid += np.power(-dtu, n) * Float(n - 2) / factorial(n)
     psid /= dtd * (dtu + dtd)
 
     return psid
 
 
 def prop_coeff_ts_0(dtu: Array, dtd: Array) -> Array:
-    psi0 = np.zeros_like(dtu)
+    psi0 = np.zeros_like(dtu, dtype=Float)
     for n in range(3, MAX_TAYLOR_SERIES):
-        psi0 += np.power(-dtu, n) * (2 - n) / factorial(n)
+        psi0 += np.power(-dtu, n) * Float(2 - n) / factorial(n)
     psi0 /= dtd
     for n in range(2, MAX_TAYLOR_SERIES):
         psi0 += np.power(-dtu, n) / factorial(n)
@@ -413,24 +446,24 @@ def prop_coeff_ts_0(dtu: Array, dtd: Array) -> Array:
 
 
 def prop_coeff_ts_u(dtu: Array, dtd: Array) -> Array:
-    psiu = np.zeros_like(dtu)
+    psiu = np.zeros_like(dtu, dtype=Float)
     for n in range(2, MAX_TAYLOR_SERIES):
-        psiu += np.power(-dtu, n) * (n - 1) / factorial(n)
+        psiu += np.power(-dtu, n) * Float(n - 1) / factorial(n)
     psiu *= dtd
     for n in range(3, MAX_TAYLOR_SERIES):
-        psiu += np.power(-dtu, n) * (-2 + 3 * n - n**2) / factorial(n)
+        psiu += np.power(-dtu, n) * Float(-2 + 3 * n - n**2) / factorial(n)
     psiu /= dtu * (dtd + dtu)
 
     return psiu
 
 
 def prop_coeff_ts_lin_d(dt: Array) -> Array:
-    psid = np.zeros_like(dt)
+    psid = np.zeros_like(dt, dtype=Float)
     return psid
 
 
 def prop_coeff_ts_lin_0(dt: Array) -> Array:
-    psi0 = np.zeros_like(dt)
+    psi0 = np.zeros_like(dt, dtype=Float)
     for n in range(2, MAX_TAYLOR_SERIES):
         psi0 += np.power(-dt, n) / factorial(n)
     psi0 /= dt
@@ -438,14 +471,14 @@ def prop_coeff_ts_lin_0(dt: Array) -> Array:
 
 
 def prop_coeff_ts_lin_u(dt: Array) -> Array:
-    psiu = np.zeros_like(dt)
+    psiu = np.zeros_like(dt, dtype=Float)
     for n in range(2, MAX_TAYLOR_SERIES):
-        psiu += np.power(-dt, n) * (n - 1) / factorial(n)
+        psiu += np.power(-dt, n) * Float(n - 1) / factorial(n)
     psiu /= dt
     return psiu
 
 
-def factorial(n: int) -> float:
+def factorial(n: int) -> Float:
     if n == 0:
-        return 1
-    return float(np.prod(np.arange(1, n + 1)).item())
+        return ONE
+    return Float(np.prod(np.arange(1, n + 1)).item())
