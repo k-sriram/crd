@@ -45,6 +45,7 @@ class FormalSolver:
         mu: Quadrature,
         x: Quadrature,
         phi: ArrayNF,
+        r: UFloat,
         # If it is possible to provide dtau more precisely than from a simple
         # difference of tau.points, then this can be provided here.
         dtau: ArrayND | None = None,
@@ -65,7 +66,10 @@ class FormalSolver:
         phi : Array(shape=(NF,))
             The normalized line profile.
 
-        dtau : Array(shape=(ND - 1,)), optional
+        r : float
+            The ratio of the continuum opacity to the line opacity.
+
+        dtau : Array(shape=(ND,)), optional
             The optical depth grid spacing. If it is possible to provide dtau
             more precisely than from a simple difference of tau.points, then
             this can be provided here. If not provided, it is calculated.
@@ -74,6 +78,7 @@ class FormalSolver:
         self.mu = mu
         self.x = x
         self.phi = phi
+        self.r = Float(r)
 
         od = mu.points > ZERO  # outgoing directions
         id = mu.points < ZERO  # incoming directions
@@ -86,7 +91,7 @@ class FormalSolver:
             dtau = np.diff(tau.points, append=NAN)
 
         # dtau(d) -> dtau_mn(d,m,n) = dtau(d) * phi(n) / |mu(m)|
-        dtau_mn = _expand_dtau(dtau, mu.points, phi)
+        dtau_mn = _expand_dtau(dtau, mu.points, phi + self.r)
         dtau_mn_minus = np.roll(dtau_mn, 1, axis=0)
 
         assert dtau_mn.shape == (nd, na, nf), f"{dtau_mn.shape=} must be {(nd, na, nf)}"
@@ -113,16 +118,19 @@ class FormalSolver:
 
         # Calculating lstar
 
-        lstar_mn = np.zeros((nd, na, nf), dtype=Float)
-        lstar_mn[:-1, od, :] += beta[:-1, od, :]
-        lstar_mn[1:, id, :] += beta[1:, id, :]
+        lstar_mx: ArrayNDxNAxNF = np.zeros((nd, na, nf), dtype=Float)
+        lstar_mx[:-1, od, :] += beta[:-1, od, :]
+        lstar_mx[1:, id, :] += beta[1:, id, :]
         # The following two lines are very small and are not present in Hubeny+Mihalas
         # They are only there in the Olson+Kunasz paper.
-        # lstar_mn[:-2, od, :] += alpha[1:-1, od, :] * np.exp(-dtau_mn[:-2, od, :])
-        # lstar_mn[2:, id, :] += gamma[1:-1, id, :] * np.exp(-dtau_mn[1:-1, id, :])
+        # lstar_mx[:-2, od, :] += alpha[1:-1, od, :] * np.exp(-dtau_mn[:-2, od, :])
+        # lstar_mx[2:, id, :] += gamma[1:-1, id, :] * np.exp(-dtau_mn[1:-1, id, :])
 
-        lstar_n = np.sum(lstar_mn * mu.weights[None, :, None], axis=1)
-        lstar = np.sum(lstar_n * phi[None, :] * x.weights[None, :], axis=1)
+        lstar_x: ArrayNDxNF = np.sum(lstar_mx * mu.weights[None, :, None], axis=1)
+        lstar: ArrayND = np.sum(
+            lstar_x * (np.square(phi) / (phi + self.r))[None, :] * x.weights[None, :],
+            axis=1,
+        )
 
         self.alpha = alpha
         self.beta = beta
@@ -131,6 +139,7 @@ class FormalSolver:
         self.indirs = id
         self.expdt = np.exp(-dtau_mn)
         self.lstar = lstar
+        self.lstar_x = lstar_x
 
     def solve(
         self, s: ArrayND | ArrayNDxNF | ArrayNDxNAxNF, bc: ArrayNAxNF
@@ -205,6 +214,7 @@ class Grid:
     phi: ArrayNF
     bc: ArrayNAxNF
     b: ArrayND
+    r: Float
     dtau: ArrayND
 
     @classmethod
@@ -222,6 +232,7 @@ class Grid:
         half_freqs: bool,
         bc_type: Literal["zero", "semi-inf"],
         b: Literal["one"],
+        r: UFloat,
     ) -> Grid:
         x_max = Float(x_max)
         if depth_mirrored:
@@ -249,7 +260,7 @@ class Grid:
         if b == "one":
             b_arr = np.ones(len(tau), dtype=Float)
 
-        return cls(tau, mu, x, phi, bc, b_arr, dtau)
+        return cls(tau, mu, x, phi, bc, b_arr, Float(r), dtau)
 
     @classmethod
     def default(
@@ -265,6 +276,7 @@ class Grid:
         half_freqs: bool = False,
         bc_type: Literal["zero", "semi-inf"] = "zero",
         b: Literal["one"] = "one",
+        r: UFloat = ZERO,
     ) -> Grid:
         return cls.new(
             log_min_tau=log_min_tau,
@@ -278,10 +290,11 @@ class Grid:
             half_freqs=half_freqs,
             bc_type=bc_type,
             b=b,
+            r=r,
         )
 
     def solver(self) -> FormalSolver:
-        return FormalSolver(self.tau, self.mu, self.x, self.phi, self.dtau)
+        return FormalSolver(self.tau, self.mu, self.x, self.phi, self.r, self.dtau)
 
     def calc_J_bar(self, Ix: ArrayNDxNAxNF) -> tuple[ArrayNDxNF, ArrayND]:
         Jx = np.sum(Ix * self.mu.weights[None, :, None], axis=1)

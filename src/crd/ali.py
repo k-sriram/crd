@@ -37,7 +37,10 @@ def ali(
     for _ in range(max_iter):
         if np.isnan(shist[-1]).any():
             raise ValueError("NaN in s")
-        Ix = fs.solve(shist[-1], grid.bc)
+
+        s = shist[-1]
+        sx = (grid.r + grid.phi[None, :] * s[:, None]) / (grid.r + grid.phi[None, :])
+        Ix = fs.solve(sx, grid.bc)
         _, J_bar = grid.calc_J_bar(Ix)
         sfs = (ONE - epsilon) * J_bar + epsb
         ds = dinv * (sfs - shist[-1])
