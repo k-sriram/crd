@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crd"
+authors = [{ name = "Sriram Krishna", email = "sriram.k@iiap.res.in" }]
+description = "Radiative transfer solver using ALI method"
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = ["Programming Language :: Python :: 3"]
+dependencies = ["matplotlib", "numpy", "scipy"]
+version = "0.1.0"
+
+[tool.mypy]
+files = ["src/crd", "tests"]
+warn_unused_ignores = true
+show_error_codes = true
+ignore_missing_imports = true
+
+[tool.isort]
+profile = "black"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
